@@ -22,11 +22,13 @@ def lambda_handler(event:, context:)
 
   # Proceed with the application if the event is "application_hired"
   application_id = payload['data']['application']['id']
-  job_id = payload['data']['job']['id']
-
   data = fetch_application_data(application_id)
   employee_create = create_employee_in_hibob(data[:first_name], data[:last_name], data[:email])
   employee_id = employee_create[:id]
+  
+  if data[:cv_url] && data[:cv_file_name]
+    upload_cv_to_hibob(employee_id, data[:cv_url], data[:cv_file_name])
+  end
   
   {
     statusCode: 200,
@@ -34,8 +36,9 @@ def lambda_handler(event:, context:)
       first_name: data[:first_name],
       last_name: data[:last_name],
       email: data[:email],
-      cv_attachment: data[:cv_attachment],
-      hibob_data: employee_create
+      cv_url: data[:cv_url],
+      cv_file_name: data[:cv_file_name],
+      hibob: employee_create
     })
   }
 end
@@ -57,14 +60,15 @@ def fetch_application_data(application_id)
   data = JSON.parse(response.body)
 
   attributes = data.dig("data", "attributes")
-  attachments = data.dig("data", "attributes", "attachments")
+  attachments = attributes["attachments"] || []
   pdf_cv = attachments.find { |a| a["context"] == "pdf_cv" }
 
   {
     first_name: attributes["first_name"],
     last_name: attributes["last_name"],
     email: attributes["email"],
-    cv_attachment: pdf_cv["url"]
+    cv_url: pdf_cv&.dig("url"),
+    cv_file_name: pdf_cv&.dig("filename")
   }
 end
 
@@ -100,9 +104,36 @@ def create_employee_in_hibob(first_name, last_name, email)
     return hibob_data
   elsif response.code.to_i == 400 && response.body.include?('validations.email.alreadyexists')
     # Handle the case where the email already exists
-    return { error: "Email already exists", email: email }
+    return { error: response.body }
   else
     # For any other error, raise the exception
     raise "Failed to create employee in HiBob: #{response.code} - #{response.body}"
+  end
+end
+
+def upload_cv_to_hibob(employee_id, document_url, document_name)
+  uri = URI("#{HIBOB_API_BASE_URL}/people/#{employee_id}/shared")
+
+  body = {
+    documentName: document_name,
+    documentUrl: document_url
+  }.to_json
+
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+
+  request = Net::HTTP::Post.new(uri)
+  request["Authorization"] = "Basic #{ENV['HIBOB_BASE64_TOKEN']}"
+  request["Content-Type"] = "application/json"
+  request["Accept"] = "application/json"
+  request.body = body
+
+  response = http.request(request)
+
+  if response.is_a?(Net::HTTPSuccess)
+    puts "Document uploaded successfully to employee ID #{employee_id}"
+    JSON.parse(response.body, symbolize_names: true)
+  else
+    raise "Failed to upload document to HiBob: #{response.code} - #{response.body}"
   end
 end
