@@ -11,6 +11,14 @@ HIBOB_API_BASE_URL = "https://api.hibob.com/v1"
 LOGGER = Logger.new($stdout)
 LOGGER.level = Logger::INFO
 
+def http_client_for(uri, read_timeout: 10, open_timeout: 5)
+  Net::HTTP.new(uri.host, uri.port).tap do |http|
+    http.use_ssl = uri.scheme == 'https'
+    http.read_timeout = read_timeout
+    http.open_timeout = open_timeout
+  end
+end
+
 def lambda_handler(event:, context:)
   request_id = context.aws_request_id
   LOGGER.info("Processing request #{request_id}")
@@ -68,12 +76,24 @@ def lambda_handler(event:, context:)
       statusCode: 200,
       headers: {'Content-Type': 'application/json'},
       body: JSON.generate({
+        status: "success",
+        message: "Employee successfully created in HiBob",
         request_id: request_id,
-        application_id: application_id.to_s,
-        hibob_employee_id: hibob_employee_id,
-        comment_id: comment_result[:data][:id]
+        data: {
+          pinpoint: {
+            application_id: application_id.to_s,
+            comment_id: comment_result[:data][:id]
+          },
+          hibob: {
+            employee_id: hibob_employee_id,
+            email: data[:email],
+            cv_uploaded: !upload_result.nil?
+          }
+        },
+        timestamp: Time.now.utc.iso8601
       })
     }
+
   rescue JSON::ParserError => e
     LOGGER.error("Invalid JSON in request body: #{e.message}")
     {
@@ -107,9 +127,8 @@ def fetch_application_data(application_id)
   request['x-api-key'] = ENV["PINPOINT_API_KEY"]
   request['Content-Type'] = 'application/json'
 
-  response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") do |http|
-    http.request(request)
-  end
+  http = http_client_for(uri)
+  response = http.request(request)
 
   unless response.is_a?(Net::HTTPSuccess)
     raise "Failed to fetch application: #{response.code} - #{response.body}"
@@ -145,8 +164,7 @@ def create_employee_in_hibob(first_name, last_name, email)
   base_email_local, base_email_domain = email.split('@')
   modified_email = email
 
-  http = Net::HTTP.new(uri.host, uri.port)
-  http.use_ssl = true
+  http = http_client_for(uri)
 
   while attempt < max_attempts
     body = {
@@ -199,8 +217,7 @@ def upload_cv_to_hibob(employee_id, document_url, document_name)
     documentUrl: document_url
   }.to_json
 
-  http = Net::HTTP.new(uri.host, uri.port)
-  http.use_ssl = true
+  http = http_client_for(uri)
 
   request = Net::HTTP::Post.new(uri)
   request["Authorization"] = "Basic #{ENV['HIBOB_BASE64_TOKEN']}"
@@ -238,8 +255,7 @@ def comment_on_pinpoint_application(application_id, hibob_employee_id)
     }
   }.to_json
 
-  http = Net::HTTP.new(uri.host, uri.port)
-  http.use_ssl = true
+  http = http_client_for(uri)
 
   request = Net::HTTP::Post.new(uri)
   request['x-api-key'] = ENV["PINPOINT_API_KEY"]
