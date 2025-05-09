@@ -25,13 +25,13 @@ This section outlines key decisions made during development and the reasoning be
 ### Centralized HTTP Timeout Handling
 
 - **Why**: To ensure consistent and safe behavior when making external API requests.
-- **How**: A `http_client_for(uri)` helper is defined in `lambda_function.rb` to configure all `Net::HTTP` connections with an `open_timeout` of 5 seconds and a `read_timeout` of 10 seconds.
+- **How**: A `http_client_for(uri)` helper is defined to configure all `Net::HTTP` connections with an `open_timeout` of 5 seconds and a `read_timeout` of 10 seconds.
 - **Benefit**: Ensures the Lambda function doesn't hang on slow responses and stays within its configured timeout. It also reduces repeated boilerplate across different HTTP calls.
 
 ### Optional CV Upload Handling
 
 - **Why**: Not all applicants have a CV available in their application record.
-- **How**: The code checks for a `cv_url` before attempting to download and upload the document to HiBob.
+- **How**: The code checks for a `cv_url` and `cv_file_name` before attempting to download and upload the document to HiBob.
 - **Benefit**: Prevents errors and unnecessary requests to HiBob when no document is present, increasing the function's resilience.
 
 ### Secure Use of Credentials
