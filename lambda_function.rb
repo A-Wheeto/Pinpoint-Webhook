@@ -60,7 +60,8 @@ def lambda_handler(event:, context:)
     end
 
     # Add comment to Pinpoint application
-    comment_on_pinpoint_application(application_id, hibob_employee_id)
+    LOGGER.info("Adding comment into Pinpoint application for id: #{hibob_employee_id}")
+    comment_result = comment_on_pinpoint_application(application_id, hibob_employee_id)
     
     # Return success response
     {
@@ -68,13 +69,9 @@ def lambda_handler(event:, context:)
       headers: {'Content-Type': 'application/json'},
       body: JSON.generate({
         request_id: request_id,
-        first_name: data[:first_name],
-        last_name: data[:last_name],
-        email: data[:email],
-        cv_url: data[:cv_url],
-        cv_file_name: data[:cv_file_name],
-        hibob: employee_create,
-        cv_upload: upload_result
+        application_id: application_id.to_s,
+        hibob_employee_id: hibob_employee_id,
+        comment_id: comment_result[:data][:id]
       })
     }
   rescue JSON::ParserError => e
@@ -138,45 +135,53 @@ def fetch_application_data(application_id)
   }
 end
 
-# Creates an employee record in HiBob
 def create_employee_in_hibob(first_name, last_name, email)
   uri = URI("#{HIBOB_API_BASE_URL}/people")
   start_date = (Date.today + 1).to_s
   site = "New York (Demo)"
 
-  body = {
-    work: {
-      site: site,
-      startDate: start_date
-    },
-    firstName: first_name,
-    surname: last_name,
-    email: email
-  }.to_json
+  max_attempts = 10
+  attempt = 0
+  base_email_local, base_email_domain = email.split('@')
+  modified_email = email
 
   http = Net::HTTP.new(uri.host, uri.port)
-
   http.use_ssl = true
 
-  request = Net::HTTP::Post.new(uri)
-  request["accept"] = 'application/json'
-  request["content-type"] = 'application/json'
-  request["authorization"] = "Basic #{ENV["HIBOB_BASE64_TOKEN"]}"
-  request.body = body
+  while attempt < max_attempts
+    body = {
+      work: {
+        site: site,
+        startDate: start_date
+      },
+      firstName: first_name,
+      surname: last_name,
+      email: modified_email
+    }.to_json
 
-  response = http.request(request)
+    request = Net::HTTP::Post.new(uri)
+    request["accept"] = 'application/json'
+    request["content-type"] = 'application/json'
+    request["authorization"] = "Basic #{ENV["HIBOB_BASE64_TOKEN"]}"
+    request.body = body
 
-  # Check if the request was successful
-  if response.is_a?(Net::HTTPSuccess)
-    hibob_data = JSON.parse(response.body, symbolize_names: true)
-    return hibob_data
-  elsif response.code.to_i == 400 && response.body.include?('validations.email.alreadyexists')
-    # Handle the case where the email already exists
-    return { error: response.body }
-  else
-    # For any other error, raise the exception
-    raise "Failed to create employee in HiBob: #{response.code} - #{response.body}"
+    response = http.request(request)
+
+    if response.is_a?(Net::HTTPSuccess)
+      hibob_data = JSON.parse(response.body, symbolize_names: true)
+      LOGGER.info("Created employee record in hibob. ID: #{hibob_data[:id]}")
+      return hibob_data
+    elsif response.code.to_i == 400 && response.body.include?('validations.email.alreadyexists')
+      attempt += 1
+      LOGGER.warn("Email already exists. Attempt #{attempt} — trying another email.")
+
+      modified_email = "#{base_email_local}-#{attempt}@#{base_email_domain}"
+    else
+      raise "Failed to create employee in HiBob: #{response.code} - #{response.body}"
+    end
   end
+
+  raise "Exceeded max attempts to generate a unique email"
 end
 
 # Uploads a CV document to an employee's profile in HiBob
