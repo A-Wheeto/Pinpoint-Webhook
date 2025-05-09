@@ -1,55 +1,122 @@
-# HiBob Integration for Pinpoint Webhook
+# Pinpoint to HiBob Integration
 
-This AWS Lambda function listens for `application_hired` webhook events from [Pinpoint](https://pinpointhq.com) and performs the following:
+A serverless integration that automatically creates employee records in HiBob when candidates are hired in Pinpoint.
 
-1. Fetches application details (including the candidate’s CV) from the Pinpoint API.
-2. Creates a new employee in [HiBob](https://www.hibob.com/).
-3. Uploads the candidate’s CV to their HiBob profile (if available).
-4. Posts a comment on the Pinpoint application with the HiBob record ID.
+## Overview
 
----
+This AWS Lambda function listens for `application_hired` webhook events from Pinpoint and performs the following actions:
 
-## 🧱 Tech Stack
+1. Receives the webhook notification when an applicant is moved to "hired" stage
+2. Fetches complete applicant data from Pinpoint API
+3. Creates a new employee record in HiBob with relevant information
+4. Uploads the candidate's CV to their HiBob profile (if available)
+5. Adds a comment on the Pinpoint application with the HiBob employee ID
 
-- Ruby
-- AWS Lambda
-- Net::HTTP
-- HiBob API
-- Pinpoint API
+## Architecture
 
----
+The integration uses:
+- AWS Lambda for serverless execution
+- AWS API Gateway to expose the webhook endpoint
+- Ruby for the implementation language
+- Pinpoint API for applicant data
+- HiBob API for employee creation
 
-## ⚙️ Environment Variables
+## Prerequisites
 
-The Lambda function relies on the following environment variables:
+- AWS Account with permissions to create Lambda functions and API Gateway
+- Pinpoint API key
+- HiBob API credentials (service user)
+
+## Setup
+
+### 1. Lambda Function
+
+1. Create a new AWS Lambda function using Ruby 3.2 runtime
+2. Copy the code from [lambda_function.rb](./lambda_function.rb) into your function
+3. Set environment variables for API credentials (see Environment Variables section)
+4. Configure memory (recommended: 256MB) and timeout (recommended: 30 seconds)
+
+### 2. API Gateway
+
+1. Create a new REST API in API Gateway
+2. Create a resource with POST method pointed to your Lambda function
+3. Deploy the API to a stage (e.g., "prod")
+4. Note the endpoint URL to configure in Pinpoint
+
+### 3. Pinpoint Webhook Configuration
+
+1. In your Pinpoint account, navigate to Settings > Webhooks
+2. Add a new webhook with the following settings:
+   - Event: `application_hired`
+   - URL: Your API Gateway endpoint URL
+   - Format: JSON
+
+## Environment Variables
+
+The Lambda function requires the following environment variables:
 
 | Variable | Description |
-|---------|-------------|
-| `PINPOINT_API_KEY` | API key for authenticating with the Pinpoint API |
-| `HIBOB_BASE64_TOKEN` | Base64-encoded API token for authenticating with HiBob |
+|----------|-------------|
+| `PINPOINT_API_KEY` | Your Pinpoint API key |
+| `HIBOB_BASE64_TOKEN` | Base64 encoded credentials for HiBob API authentication |
 
----
+**Note on HIBOB_BASE64_TOKEN:**
+This should be a Base64 encoded string of the format `SERVICE-USER-ID:TOKEN`. For example:
+```
+echo -n "SERVICE-12345:ABCDEFGHIJKLMNOPQRSTUVWXYZ" | base64
+```
 
-## 🚀 Deployment
+## Testing
 
-You can deploy this function as an AWS Lambda handler. Make sure the environment variables are configured either via the AWS Console or Terraform/CDK as part of your deployment pipeline.
+You can test the integration using Postman or any API testing tool:
 
-**Handler**: `lambda_function.lambda_handler`  
-**Runtime**: `ruby2.7` or newer (depending on your AWS Lambda settings)  
-**Trigger**: API Gateway Webhook (configured to receive Pinpoint webhook events)
-
----
-
-## 🧪 Example Event Payload
-
-Here is a sample payload that triggers this Lambda function:
+1. Send a POST request to your webhook endpoint
+2. Include the following JSON payload:
 
 ```json
 {
   "event": "application_hired",
+  "triggeredAt": 1614687278,
   "data": {
     "application": {
-      "id": "1234567"
+      "id": 8863880
+    },
+    "job": {
+      "id": 1
     }
   }
 }
+```
+
+### Expected Response
+
+A successful response will have status code 200 and a body similar to:
+
+```json
+{
+  "request_id": "5d673718-c9b0-41c5-8e4b-12a832470efd",
+  "application_id": "8863880",
+  "hibob_employee_id": "12345",
+  "comment_id": "67890"
+}
+```
+
+## Error Handling
+
+The integration provides detailed error responses:
+
+- 400 Bad Request: Invalid JSON or event type
+- 500 Internal Server Error: API failures or other unexpected errors
+
+All errors include the request ID for tracing purposes.
+
+## Logging
+
+The Lambda function logs detailed information about each step of the process using AWS CloudWatch. You can review these logs in the CloudWatch console.
+
+## Security Considerations
+
+- API keys are stored as environment variables in Lambda, not in the code
+- HTTPS is used for all API communications
+- API Gateway can be configured with additional security if needed (e.g., API keys, IAM authentication)
+  
