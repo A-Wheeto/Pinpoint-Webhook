@@ -94,21 +94,21 @@ A successful response will have status code 200 and a body similar to:
 
 ```json
 {
-   "status": "success",
-   "message": "Employee successfully created in HiBob",
-   "request_id": "c7ebe3bc-c15b-476a-9648-1469939ab200",
-   "data": {
-     "pinpoint": {
-         "application_id": "8863880",
-         "comment_id": "5186386"
-     },
-     "hibob": {
-         "employee_id": "3628748460116673185",
-         "email": "test.account@pinpoint.dev",
-         "cv_uploaded": true
-     }
-   },
-   "timestamp": "2025-05-09T14:22:30Z"
+  "status": "success",
+  "message": "Employee successfully created in HiBob",
+  "request_id": "c7ebe3bc-c15b-476a-9648-1469939ab200",
+  "data": {
+    "pinpoint": {
+      "application_id": "8863880",
+      "comment_id": "5186386"
+    },
+    "hibob": {
+      "employee_id": "3628748460116673185",
+      "email": "test.account@pinpoint.dev",
+      "cv_uploaded": true
+    }
+  },
+  "timestamp": "2025-05-09T14:22:30Z"
 }
 ```
 
