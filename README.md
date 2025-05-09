@@ -12,14 +12,48 @@ This AWS Lambda function listens for `application_hired` webhook events from Pin
 4. Uploads the candidate's CV to their HiBob profile (if available)
 5. Adds a comment on the Pinpoint application with the HiBob employee ID
 
+## Design Decisions
+
+This section outlines key decisions made during development and the reasoning behind them:
+
+### Serverless with AWS Lambda & API Gateway
+
+- **Why**: The integration is event-driven, triggered by hiring events in Pinpoint, making AWS Lambda a cost-effective and scalable choice.
+- **How**: An API Gateway endpoint triggers the Ruby-based Lambda function upon receiving an `application_hired` webhook.
+- **Alternative Considered**: A traditional server or containerized service would require additional infrastructure and cost without providing meaningful advantages for this use case.
+
+### Centralized HTTP Timeout Handling
+
+- **Why**: To ensure consistent and safe behavior when making external API requests.
+- **How**: A `http_client_for(uri)` helper is defined in `lambda_function.rb` to configure all `Net::HTTP` connections with an `open_timeout` of 5 seconds and a `read_timeout` of 10 seconds.
+- **Benefit**: Ensures the Lambda function doesn't hang on slow responses and stays within its configured timeout. It also reduces repeated boilerplate across different HTTP calls.
+
+### Optional CV Upload Handling
+
+- **Why**: Not all applicants have a CV available in their application record.
+- **How**: The code checks for a `cv_url` before attempting to download and upload the document to HiBob.
+- **Benefit**: Prevents errors and unnecessary requests to HiBob when no document is present, increasing the function's resilience.
+
+### Secure Use of Credentials
+
+- **Why**: To protect sensitive information like API tokens.
+- **How**: Environment variables (`PINPOINT_API_KEY`, `HIBOB_BASE64_TOKEN`) are used and accessed securely within the function.
+- **Benefit**: Keeps secrets out of source code and version control, following best practices for cloud function security.
+
+### Standard Ruby Libraries Only
+
+- **Why**: To minimize cold start time and compatibility issues in the Lambda environment.
+- **How**: All functionality is built using standard Ruby libraries like `net/http`, `uri`, `json`, and `base64`.
+- **Benefit**: Ensures the code runs smoothly on AWS Lambda with no external dependencies.
+
 ## Architecture
 
 The integration uses:
 - AWS Lambda for serverless execution
 - AWS API Gateway to expose the webhook endpoint
 - Ruby for the implementation language
-- Pinpoint API for applicant data
-- HiBob API for employee creation
+- Pinpoint API for applicant data - [Pinpoint API](https://developers.pinpointhq.com/)
+- HiBob API for employee creation - [HiBob API](https://apidocs.hibob.com/)
 
 ## Prerequisites
 
@@ -120,6 +154,10 @@ The integration provides detailed error responses:
 - 500 Internal Server Error: API failures or other unexpected errors
 
 All errors include the request ID for tracing purposes.
+
+## Timeouts
+
+All outbound HTTP requests to Pinpoint and HiBob APIs use a consistent timeout strategy (5 seconds open timeout, 10 seconds read timeout by default). This helps ensure the Lambda does not hang on slow network responses.
 
 ## Logging
 
