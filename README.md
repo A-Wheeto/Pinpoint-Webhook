@@ -20,9 +20,9 @@ This section outlines key decisions made during development and the reasoning be
 
 - **Why**: The integration is event-driven, triggered by hiring events in Pinpoint, making AWS Lambda a cost-effective and scalable choice.
 - **How**: An API Gateway endpoint triggers the Ruby-based Lambda function upon receiving an `application_hired` webhook.
-- **Alternative Considered**: A traditional server or containerized service would require additional infrastructure and cost without providing meaningful advantages for this use case.
+- **Alternative Considered**: A traditional server or containerised service would require additional infrastructure and cost without providing meaningful advantages for this use case.
 
-### Centralized HTTP Timeout Handling
+### Centralised HTTP Timeout Handling
 
 - **Why**: To ensure consistent and safe behavior when making external API requests.
 - **How**: A `http_client_for(uri)` helper is defined to configure all `Net::HTTP` connections with an `open_timeout` of 5 seconds and a `read_timeout` of 10 seconds.
@@ -42,7 +42,7 @@ This section outlines key decisions made during development and the reasoning be
 
 ### Standard Ruby Libraries Only
 
-- **Why**: To minimize cold start time and compatibility issues in the Lambda environment.
+- **Why**: To minimise cold start time and compatibility issues in the Lambda environment.
 - **How**: All functionality is built using standard Ruby libraries like `net/http`, `uri`, `json`, and `base64`.
 - **Benefit**: Ensures the code runs smoothly on AWS Lambda with no external dependencies.
 
@@ -148,12 +148,61 @@ A successful response will have status code 200 and a body similar to:
 
 ## Error Handling
 
-The integration provides detailed error responses:
+The integration implements a multi-layered error handling strategy:
 
-- 400 Bad Request: Invalid JSON or event type
-- 500 Internal Server Error: API failures or other unexpected errors
+### Error Classification
 
-All errors include the request ID for tracing purposes.
+- **Client Errors (400/422)**: Handled via a custom `ClientError` class that captures:
+  - Invalid or missing request body
+  - Missing application ID
+  - Invalid event types
+  - Malformed document URLs
+  - These errors are returned with appropriate HTTP status codes and detailed messages
+
+- **Parsing Errors (400)**: JSON parsing failures are caught separately and returned with clear messages
+
+- **System Errors (500)**: All other unexpected exceptions, including:
+  - API communication failures
+  - Authentication issues
+  - Timeout errors
+  - Internal processing errors
+
+### Error Response Format
+
+All error responses follow a consistent format:
+
+```json
+{
+  "message": "Human-readable error description",
+  "error": "Technical details or validation errors",
+  "request_id": "UUID for request tracing"
+}
+```
+
+### HiBob Email Collision Resolution
+
+The integration handles the common case of email address collisions in HiBob by:
+1. Attempting to create the employee with the original email
+2. If that fails with "email already exists", appending a number to the email (up to 10 attempts)
+3. If all attempts fail, returning a clear error message
+
+### CV Upload Error Isolation
+
+CV upload failures are handled as non-critical errors:
+- If the main employee creation succeeds but CV upload fails, the integration:
+  - Logs a warning
+  - Continues processing
+  - Returns success with `cv_uploaded: false` in the response
+  - Includes the upload error details in logs for troubleshooting
+
+### Logging
+
+Comprehensive logging with appropriate log levels:
+- `INFO`: Standard operation events
+- `WARN`: Non-critical issues that don't prevent core functionality
+- `ERROR`: Critical failures that prevent successful processing
+
+All logs include the request ID for correlation with API responses.
 
 ## Timeouts
 
