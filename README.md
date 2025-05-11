@@ -179,22 +179,6 @@ All error responses follow a consistent format:
 }
 ```
 
-### HiBob Email Collision Resolution
-
-The integration handles the common case of email address collisions in HiBob by:
-1. Attempting to create the employee with the original email
-2. If that fails with "email already exists", appending a number to the email (up to 10 attempts)
-3. If all attempts fail, returning a clear error message
-
-### CV Upload Error Isolation
-
-CV upload failures are handled as non-critical errors:
-- If the main employee creation succeeds but CV upload fails, the integration:
-  - Logs a warning
-  - Continues processing
-  - Returns success with `cv_uploaded: false` in the response
-  - Includes the upload error details in logs for troubleshooting
-
 ### Logging
 
 Comprehensive logging with appropriate log levels:
