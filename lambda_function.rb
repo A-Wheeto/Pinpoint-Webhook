@@ -7,9 +7,28 @@ require 'logger'
 PINPOINT_API_BASE_URL = 'https://developers-test.pinpointhq.com/api/v1'
 HIBOB_API_BASE_URL = "https://api.hibob.com/v1"
 
-# Initialize logger
+# Logger setup
 LOGGER = Logger.new($stdout)
 LOGGER.level = Logger::INFO
+
+# Custom error for client input problems
+class ClientError < StandardError
+  attr_reader :status, :details
+
+  def initialize(message, status: 422, details: {})
+    super(message)
+    @status = status
+    @details = details
+  end
+end
+
+def generate_response(status_code:, body:, request_id:)
+  {
+    statusCode: status_code,
+    headers: { 'Content-Type' => 'application/json' },
+    body: JSON.generate(body.merge(request_id: request_id))
+  }
+end
 
 def http_client_for(uri, read_timeout: 10, open_timeout: 5)
   Net::HTTP.new(uri.host, uri.port).tap do |http|
@@ -25,29 +44,17 @@ def lambda_handler(event:, context:)
 
   begin
     body_str = event['body']
-    raise "Missing request body" if body_str.nil? || body_str.empty?
-    
+    raise ClientError.new("Missing request body", status: 400) if body_str.nil? || body_str.empty?
+
     payload = JSON.parse(body_str)
     LOGGER.info("Received event: #{payload['event']}")
 
-    # Return a response if the event is not "application_hired"
     unless payload['event'] == 'application_hired'
-      LOGGER.warn("Invalid event type: #{payload['event']}")
-      return {
-        statusCode: 400,
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.generate({
-          message: "Invalid event type: #{payload['event']}. Expected 'application_hired'.",
-          request_id: request_id
-        })
-      }
+      raise ClientError.new("Invalid event type: #{payload['event']}", status: 400)
     end
 
-    # Proceed with the application if the event is "application_hired"
     application_id = payload.dig('data', 'application', 'id')
-    if application_id.nil?
-      raise "Missing application ID in the payload"
-    end
+    raise ClientError.new("Missing application ID in the payload", status: 400) if application_id.nil?
 
     # Fetch application data
     LOGGER.info("Fetching application data for ID: #{application_id}")
@@ -59,26 +66,29 @@ def lambda_handler(event:, context:)
     hibob_employee_id = employee_create[:id]
 
     # Upload CV to HiBob if available
+    upload_result = nil
     if data[:cv_url] && data[:cv_file_name]
       LOGGER.info("Uploading CV for employee ID: #{hibob_employee_id}")
-      upload_result = upload_cv_to_hibob(hibob_employee_id, data[:cv_url], data[:cv_file_name])
+      begin
+        upload_result = upload_cv_to_hibob(hibob_employee_id, data[:cv_url], data[:cv_file_name])
+      rescue => e
+        LOGGER.warn("Failed to upload CV: #{e.message}")
+        upload_result = { error: e.message }
+      end
     else
       LOGGER.info("No CV available for upload")
-      upload_result = nil
     end
 
     # Add comment to Pinpoint application
     LOGGER.info("Adding comment into Pinpoint application for id: #{hibob_employee_id}")
     comment_result = comment_on_pinpoint_application(application_id, hibob_employee_id)
-    
+
     # Return success response
-    {
-      statusCode: 200,
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.generate({
+    generate_response(
+      status_code: 200,
+      body: {
         status: "success",
         message: "Employee successfully created in HiBob",
-        request_id: request_id,
         data: {
           pinpoint: {
             application_id: application_id.to_s,
@@ -87,40 +97,39 @@ def lambda_handler(event:, context:)
           hibob: {
             employee_id: hibob_employee_id,
             email: data[:email],
-            cv_uploaded: !upload_result.nil?
+            cv_uploaded: upload_result.is_a?(Hash) && !upload_result.key?(:error)
           }
         },
         timestamp: Time.now.utc.iso8601
-      })
-    }
+      },
+      request_id: request_id
+    )
 
+  rescue ClientError => e
+    LOGGER.warn("Client error: #{e.message}")
+    generate_response(
+      status_code: e.status,
+      body: { message: e.message, error: e.details },
+      request_id: request_id
+    )
   rescue JSON::ParserError => e
     LOGGER.error("Invalid JSON in request body: #{e.message}")
-    {
-      statusCode: 400,
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.generate({
-        message: "Invalid JSON in request body",
-        error: e.message,
-        request_id: request_id
-      })
-    }
-  rescue StandardError => e
+    generate_response(
+      status_code: 400,
+      body: { message: "Invalid JSON in request body", error: e.message },
+      request_id: request_id
+    )
+  rescue => e
     LOGGER.error("Error processing request: #{e.class} - #{e.message}")
     LOGGER.error(e.backtrace.join("\n"))
-    {
-      statusCode: 500,
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.generate({
-        message: "Internal server error",
-        error: e.message,
-        request_id: request_id
-      })
-    }
+    generate_response(
+      status_code: 500,
+      body: { message: "Internal server error", error: e.message },
+      request_id: request_id
+    )
   end
 end
 
-# Fetches application data from Pinpoint API
 def fetch_application_data(application_id)
   uri = URI("#{PINPOINT_API_BASE_URL}/applications/#{application_id}?extra_fields[applications]=attachments")
   request = Net::HTTP::Get.new(uri)
@@ -135,12 +144,8 @@ def fetch_application_data(application_id)
   end
 
   data = JSON.parse(response.body)
-
   attributes = data.dig("data", "attributes")
-
-  if attributes.nil?
-    raise "Invalid response format from Pinpoint API"
-  end
+  raise "Invalid response format from Pinpoint API" if attributes.nil?
 
   attachments = attributes["attachments"] || []
   pdf_cv = attachments.find { |a| a["context"] == "pdf_cv" }
@@ -168,19 +173,16 @@ def create_employee_in_hibob(first_name, last_name, email)
 
   while attempt < max_attempts
     body = {
-      work: {
-        site: site,
-        startDate: start_date
-      },
+      work: { site: site, startDate: start_date },
       firstName: first_name,
       surname: last_name,
       email: modified_email
     }.to_json
 
     request = Net::HTTP::Post.new(uri)
-    request["accept"] = 'application/json'
-    request["content-type"] = 'application/json'
-    request["authorization"] = "Basic #{ENV["HIBOB_BASE64_TOKEN"]}"
+    request["Accept"] = 'application/json'
+    request["Content-type"] = 'application/json'
+    request["Authorization"] = "Basic #{ENV["HIBOB_BASE64_TOKEN"]}"
     request.body = body
 
     response = http.request(request)
@@ -192,7 +194,6 @@ def create_employee_in_hibob(first_name, last_name, email)
     elsif response.code.to_i == 400 && response.body.include?('validations.email.alreadyexists')
       attempt += 1
       LOGGER.warn("Email already exists. Attempt #{attempt} — trying another email.")
-
       modified_email = "#{base_email_local}-#{attempt}@#{base_email_domain}"
     else
       raise "Failed to create employee in HiBob: #{response.code} - #{response.body}"
@@ -202,12 +203,9 @@ def create_employee_in_hibob(first_name, last_name, email)
   raise "Exceeded max attempts to generate a unique email"
 end
 
-# Uploads a CV document to an employee's profile in HiBob
 def upload_cv_to_hibob(employee_id, document_url, document_name)
-  # Basic URL validation
   unless document_url =~ /\A#{URI::regexp(['http', 'https'])}\z/
-    LOGGER.error("Invalid document URL format: #{document_url}")
-    return { error: "Invalid document URL format" }
+    raise ClientError.new("Invalid document URL format", status: 400)
   end
 
   uri = URI("#{HIBOB_API_BASE_URL}/docs/people/#{employee_id}/shared")
