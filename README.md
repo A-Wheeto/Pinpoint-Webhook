@@ -20,7 +20,7 @@ This section outlines key decisions made during development and the reasoning be
 
 - **Why**: The integration is event-driven, triggered by hiring events in Pinpoint, making AWS Lambda a cost-effective and scalable choice.
 - **How**: An API Gateway endpoint triggers the Ruby-based Lambda function upon receiving an `application_hired` webhook.
-- **Alternative Considered**: A traditional server or containerised service would require additional infrastructure and cost without providing meaningful advantages for this use case.
+- **Alternative Considered**: A traditional server or containerised service would require additional infrastructure and cost.
 
 ### Centralised HTTP Timeout Handling
 
@@ -30,7 +30,7 @@ This section outlines key decisions made during development and the reasoning be
 
 ### Optional CV Upload Handling
 
-- **Why**: Not all applicants have a CV available in their application record.
+- **Why**: An applicant might not have a CV file on their application record.
 - **How**: The code checks for a `cv_url` and `cv_file_name` before attempting to download and upload the document to HiBob.
 - **Benefit**: Prevents errors and unnecessary requests to HiBob when no document is present, increasing the function's resilience.
 
@@ -38,11 +38,11 @@ This section outlines key decisions made during development and the reasoning be
 
 - **Why**: To protect sensitive information like API tokens.
 - **How**: Environment variables (`PINPOINT_API_KEY`, `HIBOB_BASE64_TOKEN`) are used and accessed securely within the function.
-- **Benefit**: Keeps secrets out of source code and version control, following best practices for cloud function security.
+- **Benefit**: Keeps secrets out of source code and version control.
 
 ### Standard Ruby Libraries Only
 
-- **Why**: To minimise cold start time and compatibility issues in the Lambda environment.
+- **Why**: To minimise start time and compatibility issues in the Lambda environment.
 - **How**: All functionality is built using standard Ruby libraries like `net/http`, `uri`, `json`, and `base64`.
 - **Benefit**: Ensures the code runs smoothly on AWS Lambda with no external dependencies.
 
@@ -74,16 +74,8 @@ The integration uses:
 
 1. Create a new REST API in API Gateway
 2. Create a resource with POST method pointed to your Lambda function
-3. Deploy the API to a stage (e.g., "prod")
+3. Deploy the API to a stage
 4. Note the endpoint URL to configure in Pinpoint
-
-### 3. Pinpoint Webhook Configuration
-
-1. In your Pinpoint account, navigate to Settings > Webhooks
-2. Add a new webhook with the following settings:
-   - Event: `application_hired`
-   - URL: Your API Gateway endpoint URL
-   - Format: JSON
 
 ## Environment Variables
 
@@ -188,10 +180,6 @@ Comprehensive logging with appropriate log levels:
 
 All logs include the request ID for correlation with API responses.
 
-## Timeouts
-
-All outbound HTTP requests to Pinpoint and HiBob APIs use a consistent timeout strategy (5 seconds open timeout, 10 seconds read timeout by default). This helps ensure the Lambda does not hang on slow network responses.
-
 ## Logging
 
 The Lambda function logs detailed information about each step of the process using AWS CloudWatch. You can review these logs in the CloudWatch console.
@@ -200,5 +188,3 @@ The Lambda function logs detailed information about each step of the process usi
 
 - API keys are stored as environment variables in Lambda, not in the code
 - HTTPS is used for all API communications
-- API Gateway can be configured with additional security if needed (e.g., API keys, IAM authentication)
-  
